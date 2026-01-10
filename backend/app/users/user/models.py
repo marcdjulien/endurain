@@ -47,6 +47,7 @@ class User(Base):
         health_sleep: List of health sleep records for the user.
         health_weight: List of health weight records for the user.
         health_steps: List of health steps records for the user.
+        health_steps_intraday: List of health steps intraday records for the user.
         health_targets: List of health targets for the user.
         notifications: List of notifications for the user.
         goals: List of user goals.
@@ -237,6 +238,13 @@ class User(Base):
     # Establish a one-to-many relationship with 'health_steps'
     health_steps = relationship(
         "HealthSteps",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+    # Establish a one-to-many relationship with 'health_steps_intraday'
+    health_steps_intraday = relationship(
+        "HealthStepsIntraday",
         back_populates="user",
         cascade="all, delete-orphan",
     )

@@ -15,6 +15,8 @@ import activities.activity_exercise_titles.crud as activity_exercise_titles_crud
 
 import activities.activity_workout_steps.schema as activity_workout_steps_schema
 
+import health.health_steps.schema as health_steps_schema
+
 import users.user_default_gear.utils as user_default_gear_utils
 
 import garmin.utils as garmin_utils
@@ -489,6 +491,15 @@ def parse_fit_file(
         is_cadence_set = False
         is_velocity_set = False
 
+        # Last full timestamp from monitor frame
+        last_monitoring_full_timestamp = None
+
+        # Array to store intraday steps
+        intraday_steps = []
+
+        # Array to store intraday steps
+        intraday_heart_rate = []
+
         # Open the FIT file
         with open(file, "rb") as fit_file:
             fit_data = fitdecode.FitReader(fit_file)
@@ -496,6 +507,13 @@ def parse_fit_file(
             # Iterate over FIT messages
             for frame in fit_data:
                 if isinstance(frame, fitdecode.FitDataMessage):
+                    # TODO: Also Add support for monitoring_hr_data
+                    if frame.name == "monitoring":
+                        steps, heart_rate, last_timestamp = parse_frame_monitoring(frame, last_monitoring_full_timestamp)
+                        intraday_steps.extend(steps)
+                        intraday_heart_rate.extend(heart_rate)
+                        last_monitoring_full_timestamp = last_timestamp
+
                     if frame.name == "session":
                         # Initialize session data
                         city, town, country = None, None, None
@@ -763,6 +781,8 @@ def parse_fit_file(
             "workout_steps": workout_steps,
             "lengths": lengths,
             "file_id": file_id,
+            "intraday_steps": intraday_steps,
+            "intraday_heart_rate": intraday_heart_rate,
         }
     except HTTPException as http_err:
         raise http_err
@@ -1044,6 +1064,52 @@ def parse_frame_workout_step(frame):
         weight_display_unit=workout_set_data[8],
         secondary_target_value=secondary_target_value,
     )
+
+
+def reconstruct_timestamp_16(last_full_timestamp, timestamp_16):
+    """
+    Reconstruct full timestamp from timestamp_16 and last known timestamp
+    """
+    base = last_full_timestamp - timedelta(
+        seconds=int(last_full_timestamp.timestamp()) % (1 << 16)
+    )
+    candidate = base + timedelta(seconds=int(timestamp_16))
+
+    # Handle wrap-around
+    if candidate < last_full_timestamp:
+        candidate += timedelta(seconds=(1 << 16))
+
+    return candidate
+
+
+def parse_frame_monitoring(frame, last_full_timestamp):
+    steps = []
+    heart_rate = []
+
+    data = {}
+    for field in frame.fields:
+        data.update({field.name: field.value})
+        for sf in getattr(field.field, "subfields", []) or []:
+            data.update({sf.name: sf.render(field.raw_value)})
+
+    current_time = last_full_timestamp
+    if data.get("timestamp"):
+        last_full_timestamp = data.get("timestamp")
+        current_time = data.get("timestamp")
+
+    if data.get("timestamp_16"):
+        current_time = reconstruct_timestamp_16(current_time, data.get("timestamp_16"))
+
+    if data.get("steps"):
+        # TODO: Add other stats
+        steps.append(health_steps_schema.HealthStepsIntraday(
+            steps=data.get("steps"),
+            timestamp=current_time,
+            source=health_steps_schema.Source.GARMIN,
+        ))
+
+    # TODO: Add heart rate
+    return steps, heart_rate, last_full_timestamp
 
 
 def parse_frame_exercise_title(frame):

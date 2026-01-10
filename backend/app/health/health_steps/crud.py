@@ -261,8 +261,80 @@ def create_health_steps(
         # Raise an HTTPException with a 500 status code
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error occurred",
-        ) from db_err
+            detail="Internal Server Error",
+        ) from err
+    
+
+def create_health_steps_intraday(
+    user_id: int, health_steps_intraday: list[health_steps_schema.HealthStepsIntraday], db: Session
+) -> health_steps_schema.HealthStepsIntraday:
+    """
+    Create a new intraday health steps record for a user.
+
+    This function creates a new intraday health steps entry in the database for the specified user.
+    If no datetime is provided, it defaults to the current date/time.
+
+    Args:
+        user_id (int): The ID of the user for whom the health steps record is being created.
+        health_steps_intraday (list, health_steps_schema.HealthStepsIntraday): The health steps data to be created.
+            The 'id' and 'user_id' fields are excluded from the input as they are set internally.
+        db (Session): The database session for executing the database operations.
+
+    Returns:
+        health_steps_schema.HealthStepsIntraday: The created health steps record with the assigned ID.
+
+    Raises:
+        HTTPException:
+            - 409 Conflict: If a health steps entry already exists for the given date.
+            - 500 Internal Server Error: If any other unexpected error occurs during creation.
+    """
+    created = []
+    try:
+        for steps in health_steps_intraday:
+            # Check if timestamp is None
+            if steps.timestamp is None:
+                # Set the date to the current date
+                steps.timestamp = func.now()
+
+            # Create a new health_steps_intraday
+            db_health_steps_intraday = health_steps_models.HealthStepsIntraday(
+                **steps.model_dump(exclude={"id", "user_id"}, exclude_none=False),
+                user_id=user_id,
+            )
+
+            # Add the entry to the database
+            db.add(db_health_steps_intraday)
+            db.commit()
+            db.refresh(db_health_steps_intraday)
+
+            # Set the id of the entry
+            steps.id = db_health_steps_intraday.id
+            steps.user_id = db_health_steps_intraday.user_id
+            
+            created.append(steps)
+        return created
+    except IntegrityError as integrity_error:
+        # Rollback the transaction
+        db.rollback()
+
+        # Raise an HTTPException with a 409 Internal Server Error status code
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Duplicate entry error. Check if there is already a entry created for {health_steps_intraday.timestamp}",
+        ) from integrity_error
+    except Exception as err:
+        # Rollback the transaction
+        db.rollback()
+
+        # Log the exception
+        core_logger.print_to_log(
+            f"Error in create_health_steps: {err}", "error", exc=err
+        )
+        # Raise an HTTPException with a 500 Internal Server Error status code
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal Server Error",
+        ) from err
 
 
 def edit_health_steps(
